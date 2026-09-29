@@ -1,0 +1,111 @@
+name: Test, Build and Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: course-assistant-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows tests and EXE
+    runs-on: windows-2022
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Validate version and release notes
+        id: version
+        shell: pwsh
+        run: |
+          python scripts/release_tools.py check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $v = (Get-Content VERSION -Raw).Trim()
+          "value=$v" >> $env:GITHUB_OUTPUT
+      - name: Unit and offline browser tests
+        run: python -m pytest -q --junitxml=build/test-results.xml
+      - name: Build EXE and test the packaged application
+        run: python scripts/release_tools.py build
+      - name: Preserve diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics
+          path: |
+            build/test-results.xml
+            build/smoke-report.json
+          if-no-files-found: ignore
+      - name: Upload release inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-inputs
+          if-no-files-found: error
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS.txt
+            build/release-notes.md
+            build/test-results.xml
+            build/smoke-report.json
+
+  release:
+    name: Publish verified build
+    needs: windows
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-inputs
+          path: release-inputs
+      - name: Create immutable-by-policy version release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.windows.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists; it will NOT be overwritten."
+            echo "Bump VERSION and CHANGELOG for a new downloadable release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if git rev-parse "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "Tag already exists without a release; manual reconciliation required."
+            exit 1
+          fi
+          cd release-inputs/dist
+          sha256sum -c SHA256SUMS.txt
+          cd ../..
+          gh release create "$VERSION" \
+            --target "$GITHUB_SHA" --title "$VERSION · Windows 中文基础版" \
+            --notes-file release-inputs/build/release-notes.md \
+            --draft \
+            release-inputs/dist/*.exe \
+            release-inputs/dist/*.zip \
+            release-inputs/dist/SHA256SUMS.txt
+          gh release edit "$VERSION" --draft=false --latest
+          gh release view "$VERSION" --json url,assets >> "$GITHUB_STEP_SUMMARY"

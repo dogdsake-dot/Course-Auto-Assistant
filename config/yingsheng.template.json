@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "site": "yingsheng",
+  "verified": false,
+  "evidence": "",
+  "course_center_url": "https://qy.yingsheng.com/26058/courselist/",
+  "courses": {
+    "ready": "",
+    "items": "",
+    "link": "",
+    "status": "",
+    "complete": [],
+    "pending": [],
+    "pagination": "unknown",
+    "next_button": "",
+    "next_disabled": ""
+  },
+  "lessons": {
+    "ready": "",
+    "items": "",
+    "link": "",
+    "status": "",
+    "complete": [],
+    "pending": [],
+    "pagination": "unknown",
+    "next_button": "",
+    "next_disabled": ""
+  },
+  "video_selector": "video",
+  "attention_selectors": []
+}
